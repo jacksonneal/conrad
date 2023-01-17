@@ -6,6 +6,15 @@ module Main where
 -- import Data.List.Split
 import Text.Printf
 
+{- 
+Ideas: 
+- Haddock style comments
+- Data.Array 
+- Use Either for fail case chcking
+- use vector library 
+- use vector-sized library
+-}
+
 type Vector = [Double]
 
 type Matrix = [Vector]
