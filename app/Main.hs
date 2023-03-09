@@ -6,12 +6,12 @@ module Main where
 -- import Data.List.Split
 import Text.Printf
 
-{- 
-Ideas: 
+{-
+Ideas:
 - Haddock style comments
-- Data.Array 
+- Data.Array
 - Use Either for fail case chcking
-- use vector library 
+- use vector library
 - use vector-sized library
 -}
 

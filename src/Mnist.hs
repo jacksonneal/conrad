@@ -9,7 +9,7 @@ render :: Integral a => a -> Char
 render n = s !! (fromIntegral n * length s `div` 256)
   where
     s = " .:oO@"
- 
+
 main :: IO ()
 main = do
   s <- decompress <$> BS.readFile "data/train-images-idx3-ubyte.gz"
@@ -32,7 +32,3 @@ relu' :: Float -> Float
 relu' x
   | x < 0 = 0
   | otherwise = 1
-
-brain :: [Int] -> IO [([Float], [[Float]])] 
-brain szs@(_:ts) = zip (flip replicate 1 <$> ts) <$> 
-  zipWithM (\m n -> )
