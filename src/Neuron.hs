@@ -22,23 +22,24 @@ mm = (. t) . map . mv
 
 type Activation = Float -> Float
 
-perceptron :: Activation
-perceptron x
-  | x <= 0 = 0
-  | otherwise = 1
-
 sigmoid :: Activation
 sigmoid z = 1 / (1 + exp (-z))
 
--- util
+sigmoid' :: Activation
+sigmoid' x = sigmoid x * (1 - sigmoid x)
 
-fmapNested :: (Functor f, Functor g) => (a -> b) -> f (g a) -> f (g b)
-fmapNested = fmap . fmap
+relu :: Activation
+relu = max 0
+
+relu' :: Activation
+relu' x
+  | x <= 0 = 0
+  | otherwise = 1
 
 -- layers
 
 fcl :: [[Float]] -> [[Float]] -> Activation -> [[Float]]
-fcl = (flip fmapNested .) . mm
+fcl = (flip (map . map) .) . mm
 
 -- cost functions
 
@@ -47,3 +48,9 @@ mse ys as = (1 / (2 * n)) * sse
   where
     n = fromIntegral $ length ys
     sse = sum $ zipWith (\y a -> (y - a) ^ 2) ys as
+
+mse' :: [Float] -> [Float] -> Float
+mse' ys as = (1 / n) * se
+  where
+    n = fromIntegral $ length ys
+    se = sum $ zipWith (-) ys as
