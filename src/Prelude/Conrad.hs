@@ -5,6 +5,7 @@
 module Prelude.Conrad where
 
 import Data.Function (on)
+import qualified Data.Map as Map
 import GHC.TypeLits
 
 mapIdx :: (a -> Int -> b) -> [a] -> [b]
@@ -52,12 +53,6 @@ instance Floating a => Floating (Dual a) where
   acosh (Dual x x') = Dual (acosh x) (x' / sqrt (x * x - 1))
   atanh (Dual x x') = Dual (atanh x) (x' / (1 - x * x))
 
--- class Differentiable a where
---   dual :: a -> Dual a
---
--- instance Floating a => Differentiable (Scalar a) where
---   dual x = Dual x 1.0
-
 diffF :: Floating a => (Dual a -> Dual b) -> a -> b
 diffF f = tangent . f . (`Dual` 1.0)
 
@@ -66,38 +61,81 @@ gradF f xs = map partial idxs
   where
     idxs = [0 .. length xs - 1]
     partial = tangent . f . oneHotDuals
-    oneHotDuals i = mapIdx (\x j -> if i == j then Dual x 1.0 else Dual x 0.0) xs
+    oneHotDuals i = mapIdx (\x j -> Dual x (if i == j then 1.0 else 0.0)) xs
 
-tanhDemo :: Floating a => Scalar a -> Scalar a
-tanhDemo (Scalar x) = Scalar ((1.0 - y) / (1.0 + y))
+jacobianF :: Floating a => ([Dual a] -> [Dual b]) -> [a] -> [[b]]
+jacobianF f xs = map partial idxs
+  where
+    idxs = [0 .. length xs - 1]
+    partial = map tangent . f . oneHotDuals
+    oneHotDuals i = mapIdx (\x j -> Dual x (if i == j then 1.0 else 0)) xs
+
+fn1 :: Floating a => a -> a
+fn1 x = (1.0 - y) / (1.0 + y)
   where
     y = x ^ (-2)
 
-tanhDemoV :: Floating a => a -> a
-tanhDemoV x = (1.0 - y) / (1.0 + y)
+fn1' :: Floating a => a -> a
+fn1' = diffF fn1
+
+fn2 :: Floating a => [a] -> a
+fn2 [x, y] = (sin (x / y) + x / y - exp y) * (x / y - exp y)
+
+fn2' :: Floating a => [a] -> [a]
+fn2' = gradF fn2
+
+fn3 :: Floating a => [a] -> [a]
+fn3 [x, y] = [x * x * y, x + y]
+
+fn3' :: Floating a => [a] -> [[a]]
+fn3' = jacobianF fn3
+
+data Expr = Var Int | Const Double | Add Expr Expr | Mul Expr Expr | Sin Expr
+
+data Tape = Tape {output :: Double, varTapes :: Map.Map Int Tape} deriving (Show)
+
+eval :: Map.Map Int Double -> Expr -> Double
+eval env (Var x) = case Map.lookup x env of
+  Just v -> v
+  Nothing -> error $ "Variable not found: " ++ show x
+eval _ (Const x) = x
+eval env (Add e1 e2) = eval env e1 + eval env e2
+eval env (Mul e1 e2) = eval env e1 * eval env e2
+eval env (Sin e) = sin (eval env e)
+
+reverseDiff :: Expr -> Double -> (Tape, Double)
+reverseDiff f x = (t, getDeriv t)
   where
-    y = x ^ (-2)
+    t = evalTape (Tape (eval (Map.singleton 1 x) f) empty) f
+    empty = Map.empty
 
-diffTanhDemo :: Floating a => a -> a
-diffTanhDemo = diffF tanh
+evalTape :: Tape -> Expr -> Tape
+evalTape t (Var varId) = case Map.lookup varId (varTapes t) of
+  Just t' -> t'
+  Nothing -> error $ "Unbound variable " ++ show varId
+evalTape t (Const c) = t
+evalTape t (Add e1 e2) =
+  let t1 = evalTape t e1
+      t2 = evalTape t e2
+      x1 = output t1
+      x2 = output t2
+   in t2 {output = x1 + x2}
+evalTape t (Mul e1 e2) =
+  let t1 = evalTape t e1
+      t2 = evalTape t e2
+      x1 = output t1
+      x2 = output t2
+   in t2 {output = x1 * x2}
+evalTape t (Sin e) =
+  let t' = evalTape t e
+      x = output t'
+      y = cos x
+   in t' {output = sin x, varTapes = Map.map (scaleTape y) (varTapes t')}
 
-fn :: Floating a => [a] -> a
-fn [x, y] = (sin (x / y) + x / y - exp y) * (x / y - exp y)
+getDeriv :: Tape -> Double
+getDeriv t = case Map.elems (varTapes t) of
+  [t'] -> output (evalTape t' (Const 1.0))
+  _ -> error "Multiple variables found in tape"
 
-fn' :: Floating a => [a] -> [a]
-fn' = gradF fn
-
--- data Op a b where
---   Add :: Num a => Op (a, a) a
---   Mul :: Num a => Op (a, a) a
---   Dot :: Num a => Op (Vector n a, Vector n a) a
---   Transpose :: Matrix m n a -> Op (Matrix m n a) (Matrix n m a)
---
--- data Value a where
---   VScalar :: Scalar a -> Value a
---   VVector :: Vector n (Value a) -> Value (Vector n a)
---   MatrixVal :: Matrix m n (Value a) -> Value (Matrix m n a)
---
--- data Tape a where
---   Nil :: Tape a
---   Cons :: Tape a -> Op (Rev a) -> Value a -> Tape (Rev a)
+scaleTape :: Double -> Tape -> Tape
+scaleTape s t = t {output = s * output t, varTapes = Map.map (scaleTape s) (varTapes t)}

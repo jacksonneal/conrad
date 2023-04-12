@@ -23,6 +23,7 @@ library
     build-depends:
         base ^>=4.16.4.0,
         bytestring,
+        containers,
         random,
         zlib,
     hs-source-dirs:   src
