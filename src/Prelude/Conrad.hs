@@ -5,6 +5,7 @@
 module Prelude.Conrad where
 
 import Data.Function (on)
+import Data.IORef
 import qualified Data.Map as Map
 import GHC.TypeLits
 
@@ -90,35 +91,80 @@ fn3 [x, y] = [x * x * y, x + y]
 fn3' :: Floating a => [a] -> [[a]]
 fn3' = jacobianF fn3
 
-data Tape a = Tape {value :: a, tangents :: Map.Map (Tape a) a} deriving (Eq)
+data Node = Node {weights :: [Double], deps :: [Int]}
 
-instance Ord a => Ord (Tape a) where
-  compare (Tape v1 _) (Tape v2 _) = compare v1 v2
+newtype Tape = Tape {nodes :: IORef [Node]}
 
-instance (Num a, Ord a) => Num (Tape a) where
-  x@(Tape vx _) + y@(Tape vy _) = Tape (vx + vy) (Map.fromList [(x, 1), (y, 1)])
-  x@(Tape vx _) - y@(Tape vy _) = Tape (vx - vy) (Map.fromList [(x, -1), (y, -1)])
-  x@(Tape vx _) * y@(Tape vy _) = Tape (vy * vy) (Map.fromList [(x, vy), (y, vx)])
-  abs x@(Tape v _) = Tape (abs v) (Map.singleton x (signum v))
-  signum x@(Tape v _) = Tape (signum v) (Map.singleton x 0)
-  fromInteger x = Tape (fromInteger x) Map.empty
+data Var = Var {tape :: Tape, index :: Int, value :: Double}
 
-instance (Fractional a, Ord a) => Fractional (Tape a) where
-  x@(Tape vx _) / y@(Tape vy _) = Tape (vx / vy) (Map.fromList [(x, 1 / vy), (y, -vx / vy ^ 2)])
-  fromRational x = Tape (fromRational x) Map.empty
+add :: Var -> Var -> IO Var
+add (Var xt xi xv) (Var yt yi yv) = do
+  index <- push2 xt xi 1.0 yi 1.0
+  return (Var xt index (xv + yv))
 
-instance (Floating a, Ord a) => Floating (Tape a) where
-  pi = Tape pi Map.empty
-  exp x@(Tape v _) = Tape (exp v) (Map.fromList [(x, exp v)])
-  log x@(Tape v _) = Tape (log v) (Map.fromList [(x, 1 / v)])
-  sin x@(Tape v _) = Tape (sin v) (Map.fromList [(x, cos v)])
-  cos (Dual x x') = Dual (cos x) (-x' * sin x)
-  asin (Dual x x') = Dual (asin x) (x' / sqrt (1 - x * x))
-  acos (Dual x x') = Dual (acos x) (-x' / sqrt (1 - x * x))
-  atan (Dual x x') = Dual (atan x) (x' / (1 + x * x))
-  sinh (Dual x x') = Dual (sinh x) (x' * cosh x)
-  cosh (Dual x x') = Dual (cosh x) (x' * sinh x)
-  tanh (Dual x x') = Dual (tanh x) (x' / (cosh x * cosh x))
-  asinh (Dual x x') = Dual (asinh x) (x' / sqrt (1 + x * x))
-  acosh (Dual x x') = Dual (acosh x) (x' / sqrt (x * x - 1))
-  atanh (Dual x x') = Dual (atanh x) (x' / (1 - x * x))
+mul :: Var -> Var -> IO Var
+mul (Var xt xi xv) (Var yt yi yv) = do
+  index <- push2 xt xi yv yi xv
+  return (Var xt index (xv * yv))
+
+sine :: Var -> IO Var
+sine (Var t i v) = do
+  index <- push1 t i (cos v)
+  return (Var t index (sin v))
+
+newtype Grad = Grad {derivs :: [Double]}
+
+newTape :: IO Tape
+newTape = Tape <$> newIORef []
+
+newVar :: Tape -> Double -> IO Var
+newVar tape value = do
+  index <- push0 tape
+  return Var {tape = tape, value = value, index = index}
+
+push0 :: Tape -> IO Int
+push0 tape = do
+  nodes' <- readIORef (nodes tape)
+  let len = length nodes'
+      node = Node {weights = [0.0, 0.0], deps = [len, len]}
+  writeIORef (nodes tape) (nodes' ++ [node])
+  return len
+
+push1 :: Tape -> Int -> Double -> IO Int
+push1 tape dep0 weight0 = do
+  nodes' <- readIORef (nodes tape)
+  let len = length nodes'
+      node = Node {weights = [weight0, 0.0], deps = [dep0, len]}
+  writeIORef (nodes tape) (nodes' ++ [node])
+  return len
+
+push2 :: Tape -> Int -> Double -> Int -> Double -> IO Int
+push2 tape dep0 weight0 dep1 weight1 = do
+  nodes' <- readIORef (nodes tape)
+  let len = length nodes'
+      node = Node {weights = [weight0, weight1], deps = [dep0, dep1]}
+  writeIORef (nodes tape) (nodes' ++ [node])
+  return len
+
+gradV :: Var -> IO Grad
+gradV v = do
+  nodes' <- readIORef (nodes $ tape v)
+  let len = length nodes'
+      derivs = replicate (len - 1) 0.0 ++ [1.0]
+      derivs' = reverse $ foldl backwardPass derivs [len - 1, len - 2 .. 0]
+      backwardPass derivs' i =
+        let node = nodes' !! i
+            [dep0, dep1] = deps node
+            [weight0, weight1] = weights node
+            deriv = derivs' !! i
+            updated = [deriv + w * derivs' !! dep | (dep, w) <- [(dep0, weight0), (dep1, weight1)]]
+         in take i derivs' ++ updated ++ drop (i + 1) derivs'
+  return Grad {derivs = derivs}
+
+grad :: ([Var] -> Var) -> ([Double] -> IO [Double])
+grad f inputs = do
+  tape <- newTape
+  vars <- mapM (newVar tape) inputs
+  let output = f vars
+  grad <- gradV output
+  return (derivs grad)
