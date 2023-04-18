@@ -4,9 +4,15 @@
 
 module Prelude.Conrad where
 
+import Control.Monad (forM_)
+import Control.Monad.ST (ST, runST, stToIO)
 import Data.Function (on)
 import Data.IORef
+import Data.List (intercalate)
 import qualified Data.Map as Map
+import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef)
+import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as VM
 import GHC.TypeLits
 
 mapIdx :: (a -> Int -> b) -> [a] -> [b]
@@ -93,78 +99,110 @@ fn3' = jacobianF fn3
 
 data Node = Node {weights :: [Double], deps :: [Int]}
 
-newtype Tape = Tape {nodes :: IORef [Node]}
+newtype Tape s = Tape {nodesRef :: STRef s (VM.MVector s Node)}
 
-data Var = Var {tape :: Tape, index :: Int, value :: Double}
+data Var s = Var {tape :: Tape s, index :: Int, value :: Double}
 
-add :: Var -> Var -> IO Var
+insertMVec :: VM.MVector s a -> Int -> a -> ST s (VM.MVector s a)
+insertMVec v i x = do
+  let l = VM.length v
+  if i >= l
+    then do
+      -- let growBy = max (l * 2) (i + 1) - l
+      let growBy = 1
+      v' <- VM.grow v growBy
+      VM.write v' i x
+      return v'
+    else do
+      VM.write v i x
+      return v
+
+push2 :: Tape s -> Int -> Double -> Int -> Double -> ST s Int
+push2 t xi xw yi yw = do
+  ns <- readSTRef (nodesRef t)
+  let zi = VM.length ns
+      z = Node {weights = [xw, yw], deps = [xi, yi]}
+  ns' <- insertMVec ns zi z
+  writeSTRef (nodesRef t) ns'
+  return zi
+
+push1 :: Tape s -> Int -> Double -> ST s Int
+push1 t d w = do
+  ns <- readSTRef (nodesRef t)
+  let oi = VM.length ns
+      o = Node {weights = [w, 0.0], deps = [d, oi]}
+  ns' <- insertMVec ns oi o
+  writeSTRef (nodesRef t) ns'
+  return oi
+
+push0 :: Tape s -> ST s Int
+push0 t = do
+  ns <- readSTRef (nodesRef t)
+  let oi = VM.length ns
+      o = Node {weights = [0.0, 0.0], deps = [oi, oi]}
+  ns' <- insertMVec ns oi o
+  writeSTRef (nodesRef t) ns'
+  return oi
+
+add :: Var s -> Var s -> ST s (Var s)
 add (Var xt xi xv) (Var yt yi yv) = do
-  index <- push2 xt xi 1.0 yi 1.0
-  return (Var xt index (xv + yv))
+  zi <- push2 xt xi 1.0 yi 1.0
+  return (Var xt zi (xv + yv))
 
-mul :: Var -> Var -> IO Var
+mul :: Var s -> Var s -> ST s (Var s)
 mul (Var xt xi xv) (Var yt yi yv) = do
-  index <- push2 xt xi yv yi xv
-  return (Var xt index (xv * yv))
+  zi <- push2 xt xi yv yi xv
+  return (Var xt zi (xv * yv))
 
-sine :: Var -> IO Var
-sine (Var t i v) = do
-  index <- push1 t i (cos v)
-  return (Var t index (sin v))
+sinV :: Var s -> ST s (Var s)
+sinV (Var t i v) = do
+  oi <- push1 t i (cos v)
+  return (Var t oi (sin v))
 
 newtype Grad = Grad {derivs :: [Double]}
 
-newTape :: IO Tape
-newTape = Tape <$> newIORef []
+newTape :: ST s (Tape s)
+newTape = Tape <$> (newSTRef =<< VM.new 0)
 
-newVar :: Tape -> Double -> IO Var
-newVar tape value = do
-  index <- push0 tape
-  return Var {tape = tape, value = value, index = index}
+newVar :: Tape s -> Double -> ST s (Var s)
+newVar t v = do
+  i <- push0 t
+  return (Var t i v)
 
-push0 :: Tape -> IO Int
-push0 tape = do
-  nodes' <- readIORef (nodes tape)
-  let len = length nodes'
-      node = Node {weights = [0.0, 0.0], deps = [len, len]}
-  writeIORef (nodes tape) (nodes' ++ [node])
-  return len
+backward :: Var s -> ST s Grad
+backward (Var t i _) = do
+  ns <- readSTRef $ nodesRef t
+  let len = VM.length ns
+  derivs <- VM.replicate len 0.0
+  VM.write derivs i 1.0
+  forM_ [len - 1, len - 2 .. i] $ \j -> do
+    n <- VM.read ns j
+    deriv <- VM.read derivs j
+    forM_ [0 .. 1] $ \k -> do
+      VM.modify derivs (+ (weights n !! k) * deriv) (deps n !! k)
+  Grad <$> (V.toList <$> V.freeze derivs)
 
-push1 :: Tape -> Int -> Double -> IO Int
-push1 tape dep0 weight0 = do
-  nodes' <- readIORef (nodes tape)
-  let len = length nodes'
-      node = Node {weights = [weight0, 0.0], deps = [dep0, len]}
-  writeIORef (nodes tape) (nodes' ++ [node])
-  return len
-
-push2 :: Tape -> Int -> Double -> Int -> Double -> IO Int
-push2 tape dep0 weight0 dep1 weight1 = do
-  nodes' <- readIORef (nodes tape)
-  let len = length nodes'
-      node = Node {weights = [weight0, weight1], deps = [dep0, dep1]}
-  writeIORef (nodes tape) (nodes' ++ [node])
-  return len
-
-gradV :: Var -> IO Grad
-gradV v = do
-  nodes' <- readIORef (nodes $ tape v)
-  let len = length nodes'
-      derivs = replicate (len - 1) 0.0 ++ [1.0]
-      derivs' = reverse $ foldl backwardPass derivs [len - 1, len - 2 .. 0]
-      backwardPass derivs' i =
-        let node = nodes' !! i
-            [dep0, dep1] = deps node
-            [weight0, weight1] = weights node
-            deriv = derivs' !! i
-            updated = [deriv + w * derivs' !! dep | (dep, w) <- [(dep0, weight0), (dep1, weight1)]]
-         in take i derivs' ++ updated ++ drop (i + 1) derivs'
-  return Grad {derivs = derivs}
-
-grad :: ([Var] -> Var) -> ([Double] -> IO [Double])
-grad f inputs = do
+example :: Double -> Double -> IO Grad
+example x y = stToIO $ do
   tape <- newTape
-  vars <- mapM (newVar tape) inputs
-  let output = f vars
-  grad <- gradV output
-  return (derivs grad)
+  xv <- newVar tape x
+  yv <- newVar tape y
+  sinxv <- sinV xv
+  xy <- mul xv yv
+  z <- add xy sinxv
+  backward z
+
+printGrads :: Grad -> IO ()
+printGrads (Grad grads) = putStrLn $ "Gradients: [" ++ intercalate ", " (map show grads) ++ "]"
+
+main :: IO ()
+main = do
+  let x = 0.5
+      y = 4.2
+  grads <- example x y
+  let dzdx = head (derivs grads)
+      dzdy = last (derivs grads)
+  putStrLn $ "dz = " ++ show (derivs grads)
+  putStrLn $ "dz/dx = " ++ show dzdx
+  putStrLn $ "dz/dy = " ++ show dzdy
+  printGrads grads
