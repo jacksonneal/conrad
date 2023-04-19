@@ -5,7 +5,9 @@
 module Prelude.Conrad where
 
 import Control.Monad (forM_)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.ST (ST, runST, stToIO)
+import Control.Monad.ST.Unsafe (unsafeIOToST)
 import Data.Function (on)
 import Data.IORef
 import Data.List (intercalate)
@@ -13,7 +15,7 @@ import qualified Data.Map as Map
 import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
-import Debug.Trace (trace)
+import Debug.Trace (trace, traceIO)
 import GHC.TypeLits
 
 mapIdx :: (a -> Int -> b) -> [a] -> [b]
@@ -195,11 +197,20 @@ example x y = stToIO $ do
   sinxv <- sinV xv
   xy <- mul xv yv
   z <- add xy sinxv
-  trace ("z: " ++ show (value z)) $ return ()
+  trST ("z: " ++ show (value z))
   backward z
 
 printGrads :: Grad -> IO ()
 printGrads (Grad grads) = putStrLn $ "Gradients: [" ++ intercalate ", " (map show grads) ++ "]"
+
+tr :: (Applicative m) => String -> m ()
+tr msg = trace msg $ pure ()
+
+trST :: String -> ST s ()
+trST msg = unsafeIOToST $ traceIO msg
+
+trIO :: MonadIO m => String -> m ()
+trIO msg = liftIO $ traceIO msg
 
 main :: IO ()
 main = do
