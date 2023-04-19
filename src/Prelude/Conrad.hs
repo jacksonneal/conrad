@@ -4,7 +4,7 @@
 
 module Prelude.Conrad where
 
-import Control.Monad (forM_)
+import Control.Monad (forM_, join)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.ST (ST, runST, stToIO)
 import Control.Monad.ST.Unsafe (unsafeIOToST)
@@ -190,10 +190,7 @@ example x y = stToIO $ do
   tape <- newTape
   xv <- newVar tape x
   yv <- newVar tape y
-  sinxv <- sinV xv
-  xy <- mul xv yv
-  z <- add xy sinxv
-  trST ("z: " ++ show (value z))
+  z <- join (add <$> mul xv yv <*> sinV xv)
   backward z
 
 printGrads :: Grad -> IO ()
