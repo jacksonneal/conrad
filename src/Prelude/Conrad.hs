@@ -164,6 +164,9 @@ sinV (Var t i v) = do
 
 newtype Grad = Grad {derivs :: [Double]}
 
+wrt :: Grad -> Var s -> Double
+wrt g v = derivs g !! index v
+
 newTape :: ST s (Tape s)
 newTape = Tape <$> (newSTRef =<< VM.new 0)
 
@@ -184,6 +187,17 @@ backward (Var t i _) = do
     forM_ [0 .. 1] $ \k -> do
       VM.modify derivs (+ (weights n !! k)) (deps n !! k)
   Grad <$> (V.toList <$> V.freeze derivs)
+
+fVar :: Var s -> ST s (Var s)
+fVar x = join (add <$> mul x x <*> sinV x)
+
+fVar' = diffR fVar
+
+diffR :: (Var s -> ST s (Var s)) -> (Var s -> ST s Double)
+diffR f x = do
+  z <- f x
+  grads <- backward z
+  return (wrt grads x)
 
 example :: Double -> Double -> IO Grad
 example x y = stToIO $ do
