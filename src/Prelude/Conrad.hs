@@ -178,15 +178,11 @@ backward (Var t i _) = do
   let len = VM.length ns
   derivs <- VM.replicate len 0.0
   VM.write derivs i 1.0
-  trace ("i: " ++ show i ++ " len: " ++ show len) $ return ()
   forM_ [len - 1, len - 2 .. 0] $ \j -> do
-    trace ("j: " ++ show j) $ return ()
     n <- VM.read ns j
     deriv <- VM.read derivs j
     forM_ [0 .. 1] $ \k -> do
-      -- VM.modify derivs (+ (weights n !! k) * deriv) (deps n !! k)
-      -- x <- newSTRef 0
-      trace ("weight: " ++ show (weights n !! k)) $ VM.modify derivs (+ (weights n !! k)) (deps n !! k)
+      VM.modify derivs (+ (weights n !! k)) (deps n !! k)
   Grad <$> (V.toList <$> V.freeze derivs)
 
 example :: Double -> Double -> IO Grad
