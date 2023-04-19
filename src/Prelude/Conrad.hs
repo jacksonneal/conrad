@@ -13,6 +13,7 @@ import qualified Data.Map as Map
 import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
+import Debug.Trace (trace)
 import GHC.TypeLits
 
 mapIdx :: (a -> Int -> b) -> [a] -> [b]
@@ -175,11 +176,15 @@ backward (Var t i _) = do
   let len = VM.length ns
   derivs <- VM.replicate len 0.0
   VM.write derivs i 1.0
-  forM_ [len - 1, len - 2 .. i] $ \j -> do
+  trace ("i: " ++ show i ++ " len: " ++ show len) $ return ()
+  forM_ [len - 1, len - 2 .. 0] $ \j -> do
+    trace ("j: " ++ show j) $ return ()
     n <- VM.read ns j
     deriv <- VM.read derivs j
     forM_ [0 .. 1] $ \k -> do
-      VM.modify derivs (+ (weights n !! k) * deriv) (deps n !! k)
+      -- VM.modify derivs (+ (weights n !! k) * deriv) (deps n !! k)
+      -- x <- newSTRef 0
+      trace ("weight: " ++ show (weights n !! k)) $ VM.modify derivs (+ (weights n !! k)) (deps n !! k)
   Grad <$> (V.toList <$> V.freeze derivs)
 
 example :: Double -> Double -> IO Grad
@@ -190,6 +195,7 @@ example x y = stToIO $ do
   sinxv <- sinV xv
   xy <- mul xv yv
   z <- add xy sinxv
+  trace ("z: " ++ show (value z)) $ return ()
   backward z
 
 printGrads :: Grad -> IO ()
