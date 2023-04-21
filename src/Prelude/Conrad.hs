@@ -106,9 +106,6 @@ newtype Tape s = Tape {nodesRef :: STRef s (VM.MVector s Node)}
 
 data Var s = Var {tape :: Tape s, index :: Int, value :: Double}
 
-instance Num (Var s) where
-  x + y = add
-
 insertMVec :: VM.MVector s a -> Int -> a -> ST s (VM.MVector s a)
 insertMVec v i x = do
   let l = VM.length v
