@@ -6,28 +6,10 @@ author:             jacksonneal
 
 extra-source-files: CHANGELOG.md
 
-executable programming-in-haskell
-    main-is:          Main.hs
-
-    build-depends:
-        base ^>=4.16.4.0,
-        random,
-        split
-    hs-source-dirs:   app
-    default-language: Haskell2010
-
 library
     exposed-modules:
-        Neuron
-        Mnist
+        Conrad
     build-depends:
         base ^>=4.16.4.0,
-        bytestring,
-        containers,
-        hmatrix,
-        mtl,
-        random,
-        vector,
-        zlib,
     hs-source-dirs:   src
     default-language: Haskell2010
